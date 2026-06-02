@@ -15,7 +15,7 @@ from .prompt_builder import PromptBuilder
 # 导入配置
 from config import DOUBAO_API_KEY, MODEL_NAME, MAX_HISTORY_TURNS,TOP_K, RAG_MIN_SCORE,URL
 
-class MultiModelChatBot:
+class MultiModalChatBot:
     def __init__ (self,api_key=None,rag=None,rag_top_k=TOP_K,rag_min_score=RAG_MIN_SCORE,prompt_builder=None,
                   request_timeout=30,max_retries=1):
         self.api_key = api_key or os.getenv("DOUBAO_API_KEY") or DOUBAO_API_KEY
@@ -88,8 +88,10 @@ class MultiModelChatBot:
                     time.sleep(1)  # 重试前等待
                 continue
 
-                # 所有重试都失败
-            raise last_exception
+        # 所有重试都失败
+        if last_exception is None:
+            last_exception = Exception("未知错误")
+        raise last_exception
 
     @staticmethod
     def _build_user_message(image_path,question):      #return 结果, 错误
@@ -159,34 +161,33 @@ class MultiModelChatBot:
         messages = self.get_history()
 
         # 1. 获取原始用户消息（用于保存历史，不含任何RAG前缀）
-        user_msg_for_history, err = MultiModelChatBot._build_user_message(image_path, question)
+        user_msg_for_history, err = MultiModalChatBot._build_user_message(image_path, question)
         if err:
             yield err
             return
 
-        # 2. 获取RAG知识（纯文本，临时使用）
-        # 2. 获取RAG知识（使用改进后的 get_knowledge 方法）
+
+        # 2. 获取RAG知识
         knowledge_text = ""
         if self.rag:
             try:
-                knowledge_text = self.rag.get_knowledge(
+                knowledge_text, details = self.rag.get_knowledge(
                     question,
                     top_k=self.rag_top_k,
                     min_score=self.rag_min_score
                 )
                 if knowledge_text:
                     knowledge_text = knowledge_text + "\n\n"
-                logger.info(f"RAG检索结果长度: {len(knowledge_text)} 字符")  # 只记录长度，避免日志过大
+                    logger.info(f"RAG检索结果长度: {len(knowledge_text)} 字符")  # 只记录长度，避免日志过大
 
-                # 输出文件名和相似度（用于定位资料）
-                raw_results = self.rag.retrieve(question, top_k=self.rag_top_k)
-                if raw_results:
-                    logger.info(f"详细资料来源（共{len(raw_results)}条）:")
-                    for idx, (score, text, filename) in enumerate(raw_results, start=1):
-                        if score >= self.rag_min_score:
+                    # 输出文件名和相似度（用于定位资料）
+                    if details:
+                        logger.info(f"详细资料来源（共{len(details)}条）:")
+                        for idx, filename, score in details:
                             logger.info(f"  [{idx}] 文件: {filename}, 相似度: {score:.4f}")
 
-
+                else:
+                    logger.info("RAG未检索到有效资料")
             except Exception as e:
                 logger.error(f"rag检索异常：{e}",exc_info=True)
 
@@ -194,7 +195,7 @@ class MultiModelChatBot:
         # 3. 构造本次请求用的用户消息（带知识前缀，但不保存）
         final_question = f"{knowledge_text}\n\n问题：{question}" if knowledge_text else \
             f"（注意：没有提供任何参考资料。请直接根据你自身知识回答，不要编造引用标记。）\n\n问题：{question}"
-        user_msg_for_request, _ = MultiModelChatBot._build_user_message(image_path, final_question)
+        user_msg_for_request, _ = MultiModalChatBot._build_user_message(image_path, final_question)
 
         #添加系统提示
         system_prompt = self.prompt_builder.build_system_prompt()

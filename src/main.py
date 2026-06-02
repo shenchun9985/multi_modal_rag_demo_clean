@@ -3,7 +3,7 @@ import re
 import time
 import json
 import tempfile
-from src.core.multi_model_chat_bot import MultiModelChatBot
+from src.core.multi_modal_chat_bot import MultiModalChatBot
 from src.core.simple_rag import ModernRAG
 from src.utils.db_utils import SessionDB
 from src.utils.logger import get_logger
@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 def run_ui_blocks():
     logger.info("正在启动RAG知识库...")
     rag = ModernRAG()
-    bot = MultiModelChatBot(rag=rag, rag_top_k=3, rag_min_score=0.6)
+    bot = MultiModalChatBot(rag=rag, rag_top_k=3, rag_min_score=0.6)
     db = SessionDB()
 
     # 辅助函数

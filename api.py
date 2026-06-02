@@ -2,7 +2,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 from pydantic import BaseModel
-from src.core.multi_model_chat_bot import MultiModelChatBot
+from src.core.multi_modal_chat_bot import MultiModalChatBot
 import os
 from src.core.simple_rag import ModernRAG
 
@@ -14,7 +14,7 @@ app = FastAPI(title="我的多模态对话API",description='支持图文+RAG')
 
 rag = ModernRAG(knowledge_path)
 
-bot = MultiModelChatBot(rag=rag)
+bot = MultiModalChatBot(rag=rag)
 
 
 #定义请求体结构

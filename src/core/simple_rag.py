@@ -1,5 +1,9 @@
+import pickle
+
 from src.utils.logger import get_logger
 logger = get_logger(__name__)
+
+from src.utils.split_text_utils import split_text
 
 import os
 
@@ -9,7 +13,7 @@ from sentence_transformers import SentenceTransformer
 
 from config import (
     EMBEDDING_MODEL_PATH,EMBEDDING_MODEL_NAME, KNOWLEDGE_FOLDER, CHUNK_SIZE, CHUNK_OVERLAP,
-    TOP_K, RAG_MIN_SCORE, MAX_KNOWLEDGE_LENGTH
+    TOP_K, RAG_MIN_SCORE, MAX_KNOWLEDGE_LENGTH,INDEX_PATH,CHUNKS_PATH,TS_PATH
 )
 
 # ===================== 基础配置 =====================
@@ -18,41 +22,7 @@ os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 
 
-def split_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP, separators=None):
-    if separators is None:
-        separators = ["\n\n", "\n", "。", "！", "？", "；", "，", " ", ""]
 
-    chunks = []
-
-    def _split(part, sep_idx=0):
-        if len(part) <= chunk_size:
-            if part.strip():
-                chunks.append(part.strip())
-            return
-        # 当前层的分隔符
-        sep = separators[sep_idx] if sep_idx < len(separators) else ""
-        if not sep:
-            # 最后按固定长度切（有overlap）
-            for i in range(0, len(part), chunk_size - overlap):
-                piece = part[i:i + chunk_size]
-                if piece.strip():
-                    chunks.append(piece.strip())
-            return
-        # 按当前分隔符切
-        segments = part.split(sep)
-        current = ""
-        for seg in segments:
-            if len(current) + len(seg) + len(sep) <= chunk_size:
-                current += (sep + seg) if current else seg
-            else:
-                if current:
-                    _split(current, sep_idx + 1)
-                current = seg
-        if current:
-            _split(current, sep_idx + 1)
-
-    _split(text)
-    return chunks
 
 
 
@@ -71,7 +41,57 @@ class ModernRAG:
         # 一启动就自动：读取文档 → 切分 → 向量化 → 建索引
         self._build_index()
 
+        # 初始化缓存（加载或构建索引）
+        self._init_cache()
 
+
+    # ==================== 缓存持久化相关 ====================
+    def _get_knowledge_timestamp(self):
+        """返回 knowledge 文件夹下所有文件的最新修改时间（字符串）"""
+        if not os.path.exists(self.folder):
+            return "0"
+        latest = os.path.getmtime(self.folder)
+        for root, dirs, files in os.walk(self.folder):
+            for f in files:
+                path = os.path.join(root, f)
+                mtime = os.path.getmtime(path)
+                if mtime > latest:
+                    latest = mtime
+        return str(latest)
+
+    def _init_cache(self):
+        index_path = INDEX_PATH
+        chunks_path = CHUNKS_PATH
+        ts_path = TS_PATH
+
+        current_ts = self._get_knowledge_timestamp()
+
+        # 检查缓存是否有效
+        cache_ok = (os.path.exists(index_path) and
+                    os.path.exists(chunks_path) and
+                    os.path.exists(ts_path))
+        if cache_ok:
+            with open(ts_path, 'r') as f:
+                saved_ts = f.read().strip()
+            if saved_ts == current_ts:
+                try:
+                    self.index = faiss.read_index(index_path)
+                    with open(chunks_path, 'rb') as f:
+                        self.chunks = pickle.load(f)
+                    logger.info(f"加载缓存成功，共 {len(self.chunks)} 个片段")
+                    return
+                except Exception as e:
+                    logger.warning(f"加载缓存失败：{e}")
+
+        # 缓存无效，重新构建
+        logger.info("构建索引...")
+        self._build_index()
+        faiss.write_index(self.index, index_path)
+        with open(chunks_path, 'wb') as f:
+            pickle.dump(self.chunks, f)
+        with open(ts_path, 'w') as f:
+            f.write(current_ts)
+        logger.info("索引已保存")
 
 
 
@@ -114,7 +134,7 @@ class ModernRAG:
         if not self.chunks:
             raise ValueError("knowledge 文件夹无有效txt文件")
 
-        logger.info(f"共 {len(self.chunks)} 个句子")
+        logger.info(f"共 {len(self.chunks)} 个片段")
 
         logger.info("向量化中...")
         # 把所有文本句子 → 变成数字向量（计算机能看懂的形式）
@@ -164,17 +184,20 @@ class ModernRAG:
         """返回纯知识文本（含编号和相似度），供大模型参考"""
         results = self.retrieve(query, top_k)
         if not results:
-            return ""
+            return "",[]
         formatted = []
+        details = []
         for idx, (score, text, filename) in enumerate(results, start=1):
             if score < min_score:
                 continue
             if len(text) > max_length:
                 text = text[:max_length] + "..."
             formatted.append(f"[{idx}].(相似度{score:.4f}) {text}")
+            details.append((idx,filename,score))
         if not formatted:
-            return ""
-        return "参考资料:\n" + "\n".join(formatted)
+            return "",[]
+        knowledge_text = "参考资料:\n" + "\n".join(formatted)
+        return knowledge_text, details
 
 
     # ==========================================

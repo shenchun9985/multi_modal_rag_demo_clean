@@ -1,3 +1,6 @@
+# 索引缓存文件
+*.pkl
+*.faiss
 .venv/
 __pycache__/
 *.pyc

@@ -34,3 +34,8 @@ MAX_HISTORY_TURNS = 20
 
 # 会话持久化数据库路径
 DB_PATH = os.path.join(BASE_DIR, "conversations.db")
+
+
+INDEX_PATH = os.path.join(BASE_DIR, "knowledge_index.faiss")
+CHUNKS_PATH = os.path.join(BASE_DIR, "knowledge_chunks.pkl")
+TS_PATH = os.path.join(BASE_DIR, "knowledge_timestamp.txt")
